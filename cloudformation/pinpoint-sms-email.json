@@ -1,0 +1,468 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "AWS API Gateway with a Lambda Integration",
+	"Metadata": {
+		"AWS::CloudFormation::Interface": {
+			"ParameterGroups": [
+				{
+					"Label": {
+						"default": "Specify Values"
+					},
+					"Parameters": [
+						"SendSMS",
+						"SendEmail",
+						"PinpointAppId"
+					]
+				}
+			]
+		}
+	},
+	"Parameters": {
+		"SendSMS": {
+			"AllowedValues": [
+				"true",
+				"false"
+			],
+			"Default": "false",
+			"Description": "If true, deploys lambda function to send SMS",
+			"Type": "String"
+		},
+		"SendEmail": {
+			"AllowedValues": [
+				"true",
+				"false"
+			],
+			"Default": "false",
+			"Description": "If true, deploys lambda function to send email",
+			"Type": "String"
+		},
+		"PinpointAppId": {
+			"Description": "Pinpoint Project ID",
+			"Type": "String"
+		}
+	},
+	"Conditions": {
+		"EnableSMSTemp": {
+			"Fn::Equals": [
+				{
+					"Ref": "SendSMS"
+				},
+				"true"
+			]
+		},
+		"EnableEmailTemp": {
+			"Fn::Equals": [
+				{
+					"Ref": "SendEmail"
+				},
+				"true"
+			]
+		}
+	},
+	"Resources": {
+		"ApiGatewayRestApi": {
+			"Type": "AWS::ApiGateway::RestApi",
+			"Properties": {
+				"Description": "An API Gateway with a Lambda Integration",
+				"EndpointConfiguration": {
+					"Types": [
+						"REGIONAL"
+					]
+				},
+				"Name": "pinpointAPI"
+			}
+		},
+		"ApiGatewayResourceEmail": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"ParentId": {
+					"Fn::GetAtt": [
+						"ApiGatewayRestApi",
+						"RootResourceId"
+					]
+				},
+				"PathPart": "email",
+				"RestApiId": {
+					"Ref": "ApiGatewayRestApi"
+				}
+			}
+		},
+		"ApiGatewayResourceSMS": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"ParentId": {
+					"Fn::GetAtt": [
+						"ApiGatewayRestApi",
+						"RootResourceId"
+					]
+				},
+				"PathPart": "sms",
+				"RestApiId": {
+					"Ref": "ApiGatewayRestApi"
+				}
+			}
+		},
+		"ApiGatewayMethodPOST": {
+			"Type": "AWS::ApiGateway::Method",
+			"Condition": "EnableEmailTemp",
+			"Properties": {
+				"ApiKeyRequired": true,
+				"ResourceId": {
+					"Ref": "ApiGatewayResourceEmail"
+				},
+				"RestApiId": {
+					"Ref": "ApiGatewayRestApi"
+				},
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"ConnectionType": "INTERNET",
+					"Credentials": {
+						"Fn::GetAtt": [
+							"ApiGatewayIamRole",
+							"Arn"
+						]
+					},
+					"IntegrationHttpMethod": "POST",
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"TimeoutInMillis": 29000,
+					"Type": "AWS_PROXY",
+					"Uri": {
+						"Fn::Join": [
+							"",
+							[
+								"arn:aws:apigateway:",
+								{
+									"Ref": "AWS::Region"
+								},
+								":lambda:path/2015-03-31/functions/",
+								{
+									"Fn::GetAtt": [
+										"LambdaFunctionEmail",
+										"Arn"
+									]
+								},
+								"/invocations"
+							]
+						]
+					}
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": "200",
+						"ResponseModels": {
+							"application/json": "Empty"
+						}
+					}
+				]
+			}
+		},
+		"ApiGatewayMethodPOSTSMS": {
+			"Type": "AWS::ApiGateway::Method",
+			"Condition": "EnableSMSTemp",
+			"Properties": {
+				"ApiKeyRequired": true,
+				"ResourceId": {
+					"Ref": "ApiGatewayResourceSMS"
+				},
+				"RestApiId": {
+					"Ref": "ApiGatewayRestApi"
+				},
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"ConnectionType": "INTERNET",
+					"Credentials": {
+						"Fn::GetAtt": [
+							"ApiGatewayIamRole",
+							"Arn"
+						]
+					},
+					"IntegrationHttpMethod": "POST",
+					"PassthroughBehavior": "WHEN_NO_MATCH",
+					"TimeoutInMillis": 29000,
+					"Type": "AWS_PROXY",
+					"Uri": {
+						"Fn::Join": [
+							"",
+							[
+								"arn:aws:apigateway:",
+								{
+									"Ref": "AWS::Region"
+								},
+								":lambda:path/2015-03-31/functions/",
+								{
+									"Fn::GetAtt": [
+										"LambdaFunctionSMS",
+										"Arn"
+									]
+								},
+								"/invocations"
+							]
+						]
+					}
+				},
+				"MethodResponses": [
+					{
+						"StatusCode": "200",
+						"ResponseModels": {
+							"application/json": "Empty"
+						}
+					}
+				]
+			}
+		},
+		"ApiGatewayDeployment": {
+			"Type": "AWS::ApiGateway::Deployment",
+			"DependsOn": ["ApiGatewayMethodPOSTSMS","ApiGatewayMethodPOST"],
+			"Properties": {
+				"Description": "Lambda API Deployment",
+				"RestApiId": {
+					"Ref": "ApiGatewayRestApi"
+				},
+				"StageName": "v1"
+			}
+		},
+		"ApiKey": {
+			"Type": "AWS::ApiGateway::ApiKey",
+			"Properties": {
+				"Name": {
+					"Fn::Join": [
+						"",
+						[
+							{
+								"Ref": "ApiGatewayRestApi"
+							},
+							{
+								"Ref": "AWS::AccountId"
+							}
+						]
+					]
+				},
+				"Description": "CloudFormation API Key V1",
+				"Enabled": true
+			}
+		},
+		"ApiGatewayIamRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "",
+							"Effect": "Allow",
+							"Principal": {
+								"Service": [
+									"apigateway.amazonaws.com"
+								]
+							},
+							"Action": [
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"Path": "/",
+				"Policies": [
+					{
+						"PolicyName": "LambdaAccess",
+						"PolicyDocument": {
+							"Version": "2012-10-17",
+							"Statement": [
+								{
+									"Effect": "Allow",
+									"Action": "lambda:*",
+									"Resource": [
+										"*"
+									]
+								}
+							]
+						}
+					}
+				]
+			}
+		},
+		"LambdaFunctionEmail": {
+			"Type": "AWS::Lambda::Function",
+			"Condition": "EnableEmailTemp",
+			"Properties": {
+				"Code": {
+					"ZipFile": "import json,os\nimport boto3\n\nimport os\nfrom botocore.exceptions import ClientError\n\n\ndef sendEmailUsingPinpoint(SENDER,APPID,MESSAGE_TYPE,TOADDRESS,SUBJECT,BODY_HTML):\n# Create a new client and specify a region.\n    client = boto3.client('pinpoint',region_name=os.environ['Region'])\n    result = {}\n    CHARSET = \"UTF-8\"\n    try:\n        response = client.send_messages(\n            ApplicationId=APPID,\n            MessageRequest={\n                'Addresses': {\n                  TOADDRESS: {\n                     'ChannelType': 'EMAIL'\n                }\n            },\n            'MessageConfiguration': {\n                'EmailMessage': {\n                    'FromAddress': SENDER,\n                    'SimpleEmail': {\n                        'Subject': {\n                            'Charset': CHARSET,\n                            'Data': SUBJECT\n                        },\n                        'HtmlPart': {\n                            'Charset': CHARSET,\n                            'Data': BODY_HTML\n                        }\n                        # 'TextPart': {\n                        #     'Charset': CHARSET,\n                        #     'Data': BODY_TEXT\n                        #     }\n                         }\n                     }\n                    }\n                }\n            )\n    except ClientError as e:\n        result['status'] = 'Failure'\n        result['error']=(e.response['Error']['Message'])\n        return result\n    if response['MessageResponse']['Result'][TOADDRESS]['StatusCode']==200:\n        #print(\"Mail Sent \",response['MessageResponse']['Result'][TOADDRESS]['MessageId'])\n        result['status']='Success'\n        result['messageID']=response['MessageResponse']['Result'][TOADDRESS]['MessageId']\n        return result\n    else:\n        result['status']='Failure'\n        result['error']=response['MessageResponse']['Result'][TOADDRESS]['StatusMessage']\n        return result\n    \n            \ndef lambda_handler(event, context):\n    print(event)\n    body=json.loads(event['body'])\n    #all will come as header and body\n    SENDER = body['fromEmail']\n    APPID = os.environ['PinpointAppID']\n    MESSAGE_TYPE = \"TRANSACTIONAL\"\n    TOADDRESS = body['toEmail']\n    SUBJECT = body['subject']\n    BODY_HTML = body['message']\n    resp = sendEmailUsingPinpoint(SENDER,APPID,MESSAGE_TYPE,TOADDRESS,SUBJECT,BODY_HTML)\n    if resp['status'] == 'Success':\n        return {\n            'statusCode': 200,\n            'body': json.dumps({\"messageID\":resp['messageID']})\n                }\n    else:\n        return {\n            'statusCode': 400,\n            'body': resp['error']\n            }"
+                    
+				},
+				"Description": "AWS Lambda function",
+				"FunctionName": "pinpoint-email",
+				"Handler": "index.lambda_handler",
+				"MemorySize": 128,
+				"Role": {
+					"Fn::GetAtt": [
+						"LambdaIamRole",
+						"Arn"
+					]
+				},
+				"Runtime": "python3.8",
+				"Timeout": 60,
+				"Environment": {
+					"Variables": {
+						"PinpointAppID": {
+							"Ref": "PinpointAppId"
+						},
+						"Region":{"Ref" : "AWS::Region"}
+					}
+				}
+			}
+		},
+		"LambdaFunctionSMS": {
+			"Type": "AWS::Lambda::Function",
+			"Condition": "EnableSMSTemp",
+			"Properties": {
+				"Code": {
+					"ZipFile": "import json,os\nimport boto3\n\nimport os\nfrom botocore.exceptions import ClientError\n\n\ndef sendSMSUsingPinpoint(SENDERID,APPID,MESSAGE_TYPE,TOADDRESS,BODY_MESSAGE,ENTITY_ID,TEMPLATE_ID):\n# Create a new client and specify a region.\n    client = boto3.client('pinpoint',region_name=os.environ['Region'])\n    result = {}\n    #CHARSET = \"UTF-8\"\n    try:\n        response = client.send_messages(\n            ApplicationId=APPID,\n            MessageRequest={\n                'Addresses': {\n                  TOADDRESS: {\n                     'ChannelType': 'SMS'\n                }\n            },\n            'MessageConfiguration': {\n                'SMSMessage': {\n                    'Body': BODY_MESSAGE,\n                    'MessageType': MESSAGE_TYPE,\n                    'SenderId':SENDERID,\n                    'EntityId':ENTITY_ID,\n                    'TemplateId':TEMPLATE_ID\n                     }\n                    }\n                }\n            )\n    except ClientError as e:\n        result['status'] = 'Failure'\n        result['error']=(e.response['Error']['Message'])\n        return result\n    if response['MessageResponse']['Result'][TOADDRESS]['StatusCode']==200:\n        #print(\"Mail Sent \",response['MessageResponse']['Result'][TOADDRESS]['MessageId'])\n        result['status']='Success'\n        result['messageID']=response['MessageResponse']['Result'][TOADDRESS]['MessageId']\n        return result\n    else:\n        result['status']='Failure'\n        result['error']=response['MessageResponse']['Result'][TOADDRESS]['StatusMessage']\n        return result\n    \n            \ndef lambda_handler(event, context):\n    print(event)\n    body=json.loads(event['body'])\n    #all will come as header and body\n    SENDERID = body['SenderID']\n    APPID = os.environ['PinpointAppID']\n    MESSAGE_TYPE = \"TRANSACTIONAL\"\n    TOADDRESS = body['toNumber']\n    ENTITY_ID=body['entityID']\n    TEMPLATE_ID=body['templateID']\n\n    BODY_MESSAGE = body['message']\n    resp = sendSMSUsingPinpoint(SENDERID,APPID,MESSAGE_TYPE,TOADDRESS,BODY_MESSAGE,ENTITY_ID,TEMPLATE_ID)\n    if resp['status'] == 'Success':\n        return {\n            'statusCode': 200,\n            'body': json.dumps({\"messageID\":resp['messageID']})\n                }\n    else:\n        return {\n            'statusCode': 400,\n            'body': resp['error']\n            }"
+				},
+				"Description": "AWS Lambda function",
+				"FunctionName": "pinpoint-sms",
+				"Handler": "index.lambda_handler",
+				"MemorySize": 128,
+				"Role": {
+					"Fn::GetAtt": [
+						"LambdaIamRole",
+						"Arn"
+					]
+				},
+				"Runtime": "python3.8",
+				"Timeout": 60,
+				"Environment": {
+					"Variables": {
+						"PinpointAppID": {
+							"Ref": "PinpointAppId"
+						},
+						"Region":{"Ref" : "AWS::Region"}
+					}
+				}
+			}
+		},
+		"LambdaPermissionEmail": {
+			"Type": "AWS::Lambda::Permission",
+			"Condition": "EnableEmailTemp",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"Principal": "apigateway.amazonaws.com",
+				"FunctionName": {
+					"Ref": "LambdaFunctionEmail"
+				}
+			}
+		},
+		"LambdaPermissionSMS": {
+			"Type": "AWS::Lambda::Permission",
+			"Condition": "EnableSMSTemp",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"Principal": "apigateway.amazonaws.com",
+				"FunctionName": {
+					"Ref": "LambdaFunctionSMS"
+				}
+			}
+		},
+		"LambdaIamRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": [
+									"lambda.amazonaws.com"
+								]
+							},
+							"Action": [
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"Path": "/",
+				"Policies": [
+					{
+						"PolicyName": "root",
+						"PolicyDocument": {
+							"Version": "2012-10-17",
+							"Statement": [
+								{
+									"Effect": "Allow",
+									"Action": [
+										"ses:SendEmail",
+										"ses:SendRawEmail",
+										"mobiletargeting:*",
+										"logs:CreateLogGroup",
+										"logs:CreateLogStream",
+										"logs:PutLogEvents"
+									],
+									"Resource": [
+										"arn:aws:ses:*",
+										"arn:aws:mobiletargeting:*",
+										"arn:aws:logs:*"
+									]
+								}
+							]
+						}
+					}
+				]
+			}
+		},
+		"UsagePlan": {
+			"Type": "AWS::ApiGateway::UsagePlan",
+            "DependsOn":"ApiGatewayDeployment",
+			"Properties": {
+				"ApiStages": [
+					{
+						"ApiId": {
+							"Ref": "ApiGatewayRestApi"
+						},
+						"Stage": "v1"
+					}
+				]
+			}
+		},
+        "UsagePlanKey":{
+            "Type" : "AWS::ApiGateway::UsagePlanKey",
+            "Properties" : {
+                "KeyId" : 
+                { "Ref": "ApiKey" }
+                ,
+                "KeyType" : "API_KEY",
+                "UsagePlanId" : 
+                { "Ref": "UsagePlan" }
+                
+              }
+          }
+          
+	},
+	"Outputs": {
+		"LambdaFunctionARNemail": {
+			"Condition": "EnableEmailTemp",
+			"Description": "Lambda function created to send email",
+			"Value": {
+				"Fn::GetAtt": [
+					"LambdaFunctionEmail",
+					"Arn"
+				]
+			}
+		},
+		"LambdaFunctionARNsms": {
+			"Condition": "EnableSMSTemp",
+			"Description": "Lambda function created to send sms",
+			"Value": {
+				"Ref": "LambdaFunctionSMS"
+			}
+		},
+		"RestAPIGatewayName": {
+			"Description": "Information about RestAPI Gateway created",
+			"Value": {
+				"Ref": "ApiGatewayRestApi"
+			}
+		}
+	}
+}
