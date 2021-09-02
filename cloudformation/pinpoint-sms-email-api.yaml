@@ -99,6 +99,9 @@ Resources:
             application/json: Empty
   ApiGatewayDeployment:
     Type: 'AWS::ApiGateway::Deployment'
+    DependsOn:
+      - ApiGatewayMethodPOSTSMS
+      - ApiGatewayMethodPOST
     Properties:
       Description: Lambda API Deployment
       RestApiId: !Ref ApiGatewayRestApi
