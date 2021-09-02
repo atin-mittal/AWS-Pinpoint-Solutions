@@ -18,3 +18,6 @@ This solution will deploy the following resources:-
 - Service permissions
 
 ![](/images/sms-email-api.jpg)
+
+#### AWS CloudFormation Link
+[CF Template](cloudformation/pinpoint-sms-email-api.yaml)
