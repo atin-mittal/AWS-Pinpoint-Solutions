@@ -16,3 +16,5 @@ This solution will deploy the following resources:-
 - Lambda for Email
 - API Key and Usage plan
 - Service permissions
+
+![](/images/sms-email-api.jpg)
