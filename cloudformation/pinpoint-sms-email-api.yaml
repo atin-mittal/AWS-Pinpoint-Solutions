@@ -1,0 +1,400 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS API Gateway with a Lambda Integration
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Specify Values
+        Parameters:
+          - PinpointAppId
+Parameters:
+  PinpointAppId:
+    Description: Pinpoint Project ID
+    Type: String
+
+Resources:
+  ApiGatewayRestApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Description: An API Gateway with a Lambda Integration
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: pinpointAPI
+  ApiGatewayResourceEmail:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt 
+        - ApiGatewayRestApi
+        - RootResourceId
+      PathPart: email
+      RestApiId: !Ref ApiGatewayRestApi
+  ApiGatewayResourceSMS:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt 
+        - ApiGatewayRestApi
+        - RootResourceId
+      PathPart: sms
+      RestApiId: !Ref ApiGatewayRestApi
+  ApiGatewayMethodPOST:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      ApiKeyRequired: true
+      ResourceId: !Ref ApiGatewayResourceEmail
+      RestApiId: !Ref ApiGatewayRestApi
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt 
+          - ApiGatewayIamRole
+          - Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Join 
+          - ''
+          - - 'arn:aws:apigateway:'
+            - !Ref 'AWS::Region'
+            - ':lambda:path/2015-03-31/functions/'
+            - !GetAtt 
+              - LambdaFunctionEmail
+              - Arn
+            - /invocations
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: Empty
+  ApiGatewayMethodPOSTSMS:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      ApiKeyRequired: true
+      ResourceId: !Ref ApiGatewayResourceSMS
+      RestApiId: !Ref ApiGatewayRestApi
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt 
+          - ApiGatewayIamRole
+          - Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Join 
+          - ''
+          - - 'arn:aws:apigateway:'
+            - !Ref 'AWS::Region'
+            - ':lambda:path/2015-03-31/functions/'
+            - !GetAtt 
+              - LambdaFunctionSMS
+              - Arn
+            - /invocations
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: Empty
+  ApiGatewayDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      Description: Lambda API Deployment
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: v1
+  ApiKey:
+    Type: 'AWS::ApiGateway::ApiKey'
+    Properties:
+      Name: !Join 
+        - ''
+        - - !Ref ApiGatewayRestApi
+          - !Ref 'AWS::AccountId'
+      Description: CloudFormation API Key V1
+      Enabled: true
+  ApiGatewayIamRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 'lambda:*'
+                Resource:
+                  - '*'
+  LambdaFunctionEmail:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: >-
+          import json,os
+
+          import boto3
+
+
+          import os
+
+          from botocore.exceptions import ClientError
+
+
+
+          def
+          sendEmailUsingPinpoint(SENDER,APPID,MESSAGE_TYPE,TOADDRESS,SUBJECT,BODY_HTML):
+
+          # Create a new client and specify a region.
+              client = boto3.client('pinpoint',region_name=os.environ['Region'])
+              result = {}
+              CHARSET = "UTF-8"
+              try:
+                  response = client.send_messages(
+                      ApplicationId=APPID,
+                      MessageRequest={
+                          'Addresses': {
+                            TOADDRESS: {
+                               'ChannelType': 'EMAIL'
+                          }
+                      },
+                      'MessageConfiguration': {
+                          'EmailMessage': {
+                              'FromAddress': SENDER,
+                              'SimpleEmail': {
+                                  'Subject': {
+                                      'Charset': CHARSET,
+                                      'Data': SUBJECT
+                                  },
+                                  'HtmlPart': {
+                                      'Charset': CHARSET,
+                                      'Data': BODY_HTML
+                                  }
+                                  # 'TextPart': {
+                                  #     'Charset': CHARSET,
+                                  #     'Data': BODY_TEXT
+                                  #     }
+                                   }
+                               }
+                              }
+                          }
+                      )
+              except ClientError as e:
+                  result['status'] = 'Failure'
+                  result['error']=(e.response['Error']['Message'])
+                  return result
+              if response['MessageResponse']['Result'][TOADDRESS]['StatusCode']==200:
+                  #print("Mail Sent ",response['MessageResponse']['Result'][TOADDRESS]['MessageId'])
+                  result['status']='Success'
+                  result['messageID']=response['MessageResponse']['Result'][TOADDRESS]['MessageId']
+                  return result
+              else:
+                  result['status']='Failure'
+                  result['error']=response['MessageResponse']['Result'][TOADDRESS]['StatusMessage']
+                  return result
+              
+                      
+          def lambda_handler(event, context):
+              print(event)
+              body=json.loads(event['body'])
+              #all will come as header and body
+              SENDER = body['fromEmail']
+              APPID = os.environ['PinpointAppID']
+              MESSAGE_TYPE = "TRANSACTIONAL"
+              TOADDRESS = body['toEmail']
+              SUBJECT = body['subject']
+              BODY_HTML = body['message']
+              resp = sendEmailUsingPinpoint(SENDER,APPID,MESSAGE_TYPE,TOADDRESS,SUBJECT,BODY_HTML)
+              if resp['status'] == 'Success':
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({"messageID":resp['messageID']})
+                          }
+              else:
+                  return {
+                      'statusCode': 400,
+                      'body': resp['error']
+                      }
+      Description: AWS Lambda function
+      FunctionName: pinpoint-email
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt 
+        - LambdaIamRole
+        - Arn
+      Runtime: python3.8
+      Timeout: 60
+      Environment:
+        Variables:
+          PinpointAppID: !Ref PinpointAppId
+          Region: !Ref 'AWS::Region'
+  LambdaFunctionSMS:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: >-
+          import json,os
+
+          import boto3
+
+
+          import os
+
+          from botocore.exceptions import ClientError
+
+
+
+          def
+          sendSMSUsingPinpoint(SENDERID,APPID,MESSAGE_TYPE,TOADDRESS,BODY_MESSAGE,ENTITY_ID,TEMPLATE_ID):
+
+          # Create a new client and specify a region.
+              client = boto3.client('pinpoint',region_name=os.environ['Region'])
+              result = {}
+              #CHARSET = "UTF-8"
+              try:
+                  response = client.send_messages(
+                      ApplicationId=APPID,
+                      MessageRequest={
+                          'Addresses': {
+                            TOADDRESS: {
+                               'ChannelType': 'SMS'
+                          }
+                      },
+                      'MessageConfiguration': {
+                          'SMSMessage': {
+                              'Body': BODY_MESSAGE,
+                              'MessageType': MESSAGE_TYPE,
+                              'SenderId':SENDERID,
+                              'EntityId':ENTITY_ID,
+                              'TemplateId':TEMPLATE_ID
+                               }
+                              }
+                          }
+                      )
+              except ClientError as e:
+                  result['status'] = 'Failure'
+                  result['error']=(e.response['Error']['Message'])
+                  return result
+              if response['MessageResponse']['Result'][TOADDRESS]['StatusCode']==200:
+                  #print("Mail Sent ",response['MessageResponse']['Result'][TOADDRESS]['MessageId'])
+                  result['status']='Success'
+                  result['messageID']=response['MessageResponse']['Result'][TOADDRESS]['MessageId']
+                  return result
+              else:
+                  result['status']='Failure'
+                  result['error']=response['MessageResponse']['Result'][TOADDRESS]['StatusMessage']
+                  return result
+              
+                      
+          def lambda_handler(event, context):
+              print(event)
+              body=json.loads(event['body'])
+              #all will come as header and body
+              SENDERID = body['SenderID']
+              APPID = os.environ['PinpointAppID']
+              MESSAGE_TYPE = "TRANSACTIONAL"
+              TOADDRESS = body['toNumber']
+              ENTITY_ID=body['entityID']
+              TEMPLATE_ID=body['templateID']
+
+              BODY_MESSAGE = body['message']
+              resp = sendSMSUsingPinpoint(SENDERID,APPID,MESSAGE_TYPE,TOADDRESS,BODY_MESSAGE,ENTITY_ID,TEMPLATE_ID)
+              if resp['status'] == 'Success':
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({"messageID":resp['messageID']})
+                          }
+              else:
+                  return {
+                      'statusCode': 400,
+                      'body': resp['error']
+                      }
+      Description: AWS Lambda function
+      FunctionName: pinpoint-sms
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt 
+        - LambdaIamRole
+        - Arn
+      Runtime: python3.8
+      Timeout: 60
+      Environment:
+        Variables:
+          PinpointAppID: !Ref PinpointAppId
+          Region: !Ref 'AWS::Region'
+  LambdaPermissionEmail:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref LambdaFunctionEmail
+  LambdaPermissionSMS:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref LambdaFunctionSMS
+  LambdaIamRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ses:SendEmail'
+                  - 'ses:SendRawEmail'
+                  - 'mobiletargeting:*'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - 'arn:aws:ses:*'
+                  - 'arn:aws:mobiletargeting:*'
+                  - 'arn:aws:logs:*'
+  UsagePlan:
+    Type: 'AWS::ApiGateway::UsagePlan'
+    DependsOn: ApiGatewayDeployment
+    Properties:
+      ApiStages:
+        - ApiId: !Ref ApiGatewayRestApi
+          Stage: v1
+  UsagePlanKey:
+    Type: 'AWS::ApiGateway::UsagePlanKey'
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+Outputs:
+  LambdaFunctionARNemail:
+    Description: Lambda function created to send email
+    Value: !GetAtt 
+      - LambdaFunctionEmail
+      - Arn
+  LambdaFunctionARNsms:
+    Description: Lambda function created to send sms
+    Value: !Ref LambdaFunctionSMS
+  RestAPIGatewayName:
+    Description: Information about RestAPI Gateway created
+    Value: !Ref ApiGatewayRestApi
